@@ -1,0 +1,10 @@
+# https://github.com/grafana/k6/blob/master/grafana/dashboards/dashboard.yml
+apiVersion: 1
+
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: ''
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards

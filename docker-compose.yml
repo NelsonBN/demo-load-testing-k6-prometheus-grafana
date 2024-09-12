@@ -1,0 +1,109 @@
+networks:
+  demo:
+    driver: bridge
+
+services:
+
+  postgres:
+    image: postgres:16.4-alpine3.20
+    container_name: postgres
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_DB: demodb
+      POSTGRES_USER: demouser
+      POSTGRES_PASSWORD: a123456789
+    volumes:
+      - ./src/Postgres/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "demodb", "-U", "demouser"]
+      interval: 15s
+      timeout: 30s
+      retries: 5
+
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: always
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --enable-feature=native-histograms
+      - --web.enable-remote-write-receiver # This is necessary to k6 to send metrics to Prometheus
+    volumes:
+      - ./src/Prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - 9090:9090
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      start_period: 3s
+      retries: 5
+
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    environment:
+      TZ: Europe/Lisbon
+      GF_AUTH_DISABLE_LOGIN_FORM: true
+      GF_AUTH_ANONYMOUS_ENABLED: true # Allow anonymous access
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin # Set the role for anonymous users to Admin
+      GF_AUTH_BASIC_ENABLED: false # Disable basic auth
+    ports:
+      - 3000:3000
+    volumes:
+      - ./src/Grafana/data-source.yml:/etc/grafana/provisioning/datasources/data-source.yml # Data source configurations
+      - ./src/Grafana/dashboards:/etc/grafana/provisioning/dashboards # Folder containing dashboards
+      - ./src/Grafana/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml # Dashboard configurations
+#      - ./out/grafana:/var/lib/grafana
+    networks:
+      - demo
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+
+  demo-api:
+    build:
+      context: .
+      dockerfile: ./src/Demo.Api/Dockerfile
+    image: technobre/demo-api
+    container_name: demo-api
+    restart: always
+    environment:
+      CONNECTIONSTRINGS__DEFAULT: Server=postgres;Port=5432;Database=demodb;User Id=demouser;Password=a123456789;
+    ports:
+      - 8080:8080
+    networks:
+      - demo
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+
+  k6:
+    image: grafana/k6:0.53.0
+    container_name: k6
+    environment:
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_STATS: p(95),p(99),min,max
+      K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM: true
+      API_ENDPOINT: http://demo-api:8080
+    volumes:
+      - ./tests/StressTest.js:/scripts/script.js
+    working_dir: /scripts
+    command: run -o experimental-prometheus-rw /scripts/script.js
+    networks:
+      - demo
+    depends_on:
+      demo-api:
+        condition: service_healthy

@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+
+scrape_configs:
+
+#################### OBSERVABILITY ####################
+  - job_name: 'Prometheus'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service_type: 'Observability'
+          service_name: 'Prometheus'
